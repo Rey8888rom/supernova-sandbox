@@ -1,0 +1,505 @@
+import pygame
+import random
+import math
+
+# Инициализация графического движка
+pygame.init()
+
+# Настройки игрового окна
+WIDTH, HEIGHT = 1000, 800
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Космическая Песочница Supernova 2.0")
+clock = pygame.time.Clock()
+
+# Палитра свечения частиц
+PALETTE = [
+    (255, 255, 255), # Белый (Сверхновая)
+    (150, 220, 255), # Голубой
+    (255, 200, 50),  # Золотой
+    (255, 80, 20),   # Оранжевый
+    (180, 50, 255)   # Фиолетовый
+]
+
+class Particle:
+    def __init__(self, x, y, speed, angle, energy_factor, color=None):
+        self.x = x
+        self.y = y
+        self.vx = math.cos(angle) * speed * energy_factor
+        self.vy = math.sin(angle) * speed * energy_factor
+        self.radius = random.uniform(2, 5) * (energy_factor * 0.5 + 0.5)
+        self.color = color if color else random.choice(PALETTE)
+        self.life = 255  
+        self.decay = random.uniform(1.5, 3.5) 
+        self.mass = self.radius 
+        self.trapped = False  
+
+    def move(self):
+        self.x += self.vx
+        self.y += self.vy
+        if not self.trapped:
+            self.vx *= 0.985
+            self.vy *= 0.985
+            self.life -= self.decay
+        else:
+            self.life -= 2.0
+
+    def draw(self, surface):
+        if self.life > 0:
+            r, g, b = self.color
+            alpha = max(0, min(255, int(self.life)))
+            glow_radius = int(self.radius * 2)
+            glow_surf = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+            pygame.draw.circle(glow_surf, (r, g, b, int(alpha * 0.3)), (glow_radius, glow_radius), glow_radius)
+            surface.blit(glow_surf, (int(self.x) - glow_radius, int(self.y) - glow_radius))
+            pygame.draw.circle(surface, (r, g, b), (int(self.x), int(self.y)), int(self.radius))
+
+class BlackHole:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.event_horizon = 70
+
+    def draw(self, surface):
+        pygame.draw.circle(surface, (0, 0, 0), (int(self.x), int(self.y)), 18)
+        pygame.draw.circle(surface, (140, 40, 255), (int(self.x), int(self.y)), 36, 2)
+
+class WhiteHole:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def draw(self, surface):
+        pygame.draw.circle(surface, (255, 255, 255), (int(self.x), int(self.y)), 18)
+        pygame.draw.circle(surface, (200, 240, 255), (int(self.x), int(self.y)), 40, 2)
+
+class Rocket:
+    def __init__(self, mx, my):
+        edges = [(-20, my), (WIDTH + 20, my), (mx, -20), (mx, HEIGHT + 20)]
+        dists = [mx, WIDTH - mx, my, HEIGHT - my]
+        self.x, self.y = edges[dists.index(min(dists))]
+        self.vx = 0
+        self.vy = 0
+        self.radius = 12
+        self.trapped = False      
+        self.destroyed = False    
+        self.activation_radius = 160
+
+    def update(self, mx, my, force_follow, particles):
+        if self.destroyed:
+            return
+
+        if self.trapped:
+            dx, dy = mx - self.x, my - self.y
+            distance = math.hypot(dx, dy)
+            if distance > 2:
+                self.vx = (dx / distance) * 5.0
+                self.vy = (dy / distance) * 5.0
+            self.x += self.vx
+            self.y += self.vy
+            return
+
+        dx, dy = mx - self.x, my - self.y
+        dist = math.hypot(dx, dy)
+
+        if force_follow or dist < self.activation_radius:
+            if dist > 10:
+                self.vx += (dx / dist) * 0.4
+                self.vy += (dy / dist) * 0.4
+                
+                speed = math.hypot(self.vx, self.vy)
+                if speed > 8:
+                    self.vx = (self.vx / speed) * 8
+                    self.vy = (self.vy / speed) * 8
+        else:
+            self.vx *= 0.92
+            self.vy *= 0.92
+
+        self.x += self.vx
+        self.y += self.vy
+
+        if math.hypot(self.vx, self.vy) > 0.8:
+            angle = math.atan2(self.vy, self.vx)
+            fx = self.x - math.cos(angle) * 14
+            fy = self.y - math.sin(angle) * 14
+            p = Particle(fx, fy, random.uniform(1, 3), angle + math.pi + random.uniform(-0.3, 0.3), 0.5, (255, 120, 20))
+            p.decay = 8.0
+            particles.append(p)
+
+    def draw(self, surface):
+        if self.destroyed:
+            return
+        angle = math.atan2(self.vy, self.vx) if (self.vx != 0 or self.vy != 0) else 0
+        p1 = (int(self.x + math.cos(angle) * 18), int(self.y + math.sin(angle) * 18))
+        p2 = (int(self.x + math.cos(angle + 2.5) * 12), int(self.y + math.sin(angle + 2.5) * 12))
+        p3 = (int(self.x + math.cos(angle - 2.5) * 12), int(self.y + math.sin(angle - 2.5) * 12))
+        
+        pygame.draw.polygon(surface, (255, 60, 60), [p1, p2, p3])
+        pygame.draw.circle(surface, (255, 255, 255), p1, 4)
+
+class HunterDrone:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.vx = 0
+        self.vy = 0
+        self.radius = 10
+        self.speed = 4.5
+        self.trapped = False
+
+    def update(self, particles, stations):
+        if self.trapped: return
+
+        target_x, target_y = None, None
+        min_dist = float('inf')
+
+        for s in stations:
+            d = math.hypot(s.x - self.x, s.y - self.y)
+            if d < min_dist:
+                min_dist = d
+                target_x, target_y = s.x, s.y
+
+        if target_x is None:
+            for p in particles:
+                d = math.hypot(p.x - self.x, p.y - self.y)
+                if d < min_dist:
+                    min_dist = d
+                    target_x, target_y = p.x, p.y
+
+        if target_x is not None:
+            dx, dy = target_x - self.x, target_y - self.y
+            dist = math.hypot(dx, dy)
+            if dist > 0:
+                self.vx = (dx / dist) * self.speed
+                self.vy = (dy / dist) * self.speed
+
+        self.x += self.vx
+        self.y += self.vy
+
+    def draw(self, surface):
+        pygame.draw.circle(surface, (50, 255, 50), (int(self.x), int(self.y)), self.radius)
+        pygame.draw.circle(surface, (255, 255, 255), (int(self.x), int(self.y)), 4)
+
+class SpaceStation:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.radius = 30
+        self.angle = 0
+        self.trapped = False
+
+    def update(self, black_holes):
+        trapped_by_bh = False
+        for bh in black_holes:
+            if math.hypot(bh.x - self.x, bh.y - self.y) < bh.event_horizon:
+                dx, dy = bh.x - self.x, bh.y - self.y
+                dist = math.hypot(dx, dy)
+                if dist > 2:
+                    self.x += (dx / dist) * 2.0
+                    self.y += (dy / dist) * 2.0
+                trapped_by_bh = True
+                break
+        if not trapped_by_bh:
+            self.angle += 0.02
+
+    def draw(self, surface):
+        pygame.draw.circle(surface, (0, 180, 255), (int(self.x), int(self.y)), 14)
+        pygame.draw.circle(surface, (100, 220, 255), (int(self.x), int(self.y)), self.radius, 3)
+        
+        for i in range(4):
+            cur_angle = self.angle + (i * math.pi / 2)
+            px = int(self.x + math.cos(cur_angle) * self.radius)
+            py = int(self.y + math.sin(cur_angle) * self.radius)
+            pygame.draw.rect(surface, (255, 255, 255), (px - 5, py - 5, 10, 10))
+
+class Shockwave:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.radius = 10
+        self.max_radius = 250
+        self.speed = 12
+        self.active = True
+
+    def update(self):
+        self.radius += self.speed
+        if self.radius >= self.max_radius:
+            self.active = False
+
+    def draw(self, surface):
+        if self.active:
+            alpha = int(255 * (1 - self.radius / self.max_radius))
+            surf = pygame.Surface((self.radius * 2, self.radius * 2), pygame.SRCALPHA)
+            pygame.draw.circle(surf, (255, 255, 255, alpha), (int(self.radius), int(self.radius)), int(self.radius), 4)
+            surface.blit(surf, (int(self.x - self.radius), int(self.y - self.radius)))
+
+def create_supernova(x, y, power, color=None):
+    particles = []
+    for _ in range(int(200 * power)):
+        p = Particle(x, y, random.uniform(2, 12), random.uniform(0, math.pi * 2), power, color)
+        particles.append(p)
+    return particles
+
+def apply_explosion_force(x, y, power, rockets, stations, drones):
+    blast_radius = 300 * power
+    for r in rockets:
+        dx, dy = r.x - x, r.y - y
+        dist = math.hypot(dx, dy)
+        if 0 < dist < blast_radius:
+            force = (1.0 - dist / blast_radius) * 15.0 * power
+            r.vx += (dx / dist) * force
+            r.vy += (dy / dist) * force
+
+    for d in drones:
+        dx, dy = d.x - x, d.y - y
+        dist = math.hypot(dx, dy)
+        if 0 < dist < blast_radius:
+            force = (1.0 - dist / blast_radius) * 12.0 * power
+            d.vx += (dx / dist) * force
+            d.vy += (dy / dist) * force
+
+    for s in stations:
+        dx, dy = s.x - x, s.y - y
+        dist = math.hypot(dx, dy)
+        if 0 < dist < blast_radius:
+            force = (1.0 - dist / blast_radius) * 5.0 * power
+            s.x += (dx / dist) * force
+            s.y += (dy / dist) * force
+
+def main():
+    running = True
+    particles = []
+    rockets = []
+    stations = []
+    drones = []
+    shockwaves = []
+    black_holes = []
+    white_holes = []
+    
+    active_bh = None
+    active_wh = None
+    
+    supernova_power = 3.0 
+    font = pygame.font.SysFont("Arial", 15)
+
+    particles.extend(create_supernova(WIDTH // 2, HEIGHT // 2, supernova_power))
+
+    while running:
+        clock.tick(60) 
+        screen.fill((5, 5, 12)) 
+
+        mx, my = pygame.mouse.get_pos()
+        mouse_buttons = pygame.mouse.get_pressed()
+        keys = pygame.key.get_pressed()
+
+        # --- СОБЫТИЯ ---
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1: # ЛКМ - Взрыв
+                    particles.extend(create_supernova(mx, my, supernova_power))
+                    apply_explosion_force(mx, my, supernova_power, rockets, stations, drones)
+                elif event.button == 3: # ПКМ - Чёрная дыра
+                    active_bh = BlackHole(mx, my)
+                    black_holes.append(active_bh)
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 3 and active_bh:
+                    active_bh = None
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_w: # W - Белая дыра
+                    active_wh = WhiteHole(mx, my)
+                    white_holes.append(active_wh)
+                elif event.key in (pygame.K_SPACE, pygame.K_RETURN):
+                    particles.extend(create_supernova(WIDTH // 2, HEIGHT // 2, supernova_power))
+                    apply_explosion_force(WIDTH // 2, HEIGHT // 2, supernova_power, rockets, stations, drones)
+                elif event.key == pygame.K_UP: supernova_power = min(10.0, supernova_power + 0.5)
+                elif event.key == pygame.K_DOWN: supernova_power = max(0.5, supernova_power - 0.5)
+                elif event.key == pygame.K_r: rockets.append(Rocket(mx, my))
+                elif event.key == pygame.K_s: stations.append(SpaceStation(mx, my))
+                elif event.key == pygame.K_h: drones.append(HunterDrone(mx, my))
+                elif event.key == pygame.K_b: shockwaves.append(Shockwave(mx, my))
+                elif event.key == pygame.K_c:
+                    particles.clear(); rockets.clear(); stations.clear(); drones.clear(); shockwaves.clear(); black_holes.clear(); white_holes.clear()
+            elif event.type == pygame.KEYUP:
+                if event.key == pygame.K_w and active_wh:
+                    active_wh = None
+
+        if active_bh and mouse_buttons[2]:
+            active_bh.x, active_bh.y = mx, my
+        if active_wh and keys[pygame.K_w]:
+            active_wh.x, active_wh.y = mx, my
+
+        # --- АННИГИЛЯЦИЯ ЧЁРНЫХ И БЕЛЫХ ДЫР ---
+        for bh in black_holes[:]:
+            for wh in white_holes[:]:
+                if math.hypot(bh.x - wh.x, bh.y - wh.y) < 50:
+                    particles.extend(create_supernova((bh.x + wh.x) / 2, (bh.y + wh.y) / 2, 6.0, color=(255, 100, 255)))
+                    if bh in black_holes: black_holes.remove(bh)
+                    if wh in white_holes: white_holes.remove(wh)
+                    if bh == active_bh: active_bh = None
+                    if wh == active_wh: active_wh = None
+                    break
+
+        # --- БЕЛЫЕ ДЫРЫ (ОТТАЛКИВАНИЕ И АННИГИЛЯЦИЯ ПРИ СБЛИЖЕНИИ) ---
+        for wh in white_holes:
+            wh.draw(screen)
+            for p in particles:
+                dist = math.hypot(p.x - wh.x, p.y - wh.y)
+                if 0 < dist < 300:
+                    push = (1.0 - dist / 300) * 12.0
+                    p.vx += ((p.x - wh.x) / dist) * push
+                    p.vy += ((p.y - wh.y) / dist) * push
+
+            for r in rockets:
+                dist = math.hypot(r.x - wh.x, r.y - wh.y)
+                if dist < 20: # Аннигиляция ракеты при сближении с белой дырой
+                    r.destroyed = True
+                    particles.extend(create_supernova(r.x, r.y, 1.5, color=(200, 240, 255)))
+                elif 0 < dist < 300:
+                    push = (1.0 - dist / 300) * 10.0
+                    r.vx += ((r.x - wh.x) / dist) * push
+                    r.vy += ((r.y - wh.y) / dist) * push
+
+            for d in drones:
+                dist = math.hypot(d.x - wh.x, d.y - wh.y)
+                if 0 < dist < 300:
+                    push = (1.0 - dist / 300) * 6.0
+                    d.vx += ((d.x - wh.x) / dist) * push
+                    d.vy += ((d.y - wh.y) / dist) * push
+
+            for s in stations:
+                dist = math.hypot(s.x - wh.x, s.y - wh.y)
+                if 0 < dist < 300:
+                    push = (1.0 - dist / 300) * 2.5
+                    s.x += ((s.x - wh.x) / dist) * push
+                    s.y += ((s.y - wh.y) / dist) * push
+
+        # --- ЧЁРНЫЕ ДЫРЫ (ПРИТЯЖЕНИЕ И АННИГИЛЯЦИЯ) ---
+        for bh in black_holes:
+            bh.draw(screen)
+            survived_particles = []
+            for p in particles:
+                dx, dy = bh.x - p.x, bh.y - p.y
+                distance = math.hypot(dx, dy)
+                if distance < 18:
+                    continue  # Аннигиляция частиц
+                
+                if distance < bh.event_horizon:
+                    p.trapped = True
+                    p.vx, p.vy = (dx / distance) * 4.5, (dy / distance) * 4.5
+                else:
+                    if distance > 0 and not p.trapped:
+                        pull = 15.0 / (distance ** 0.5)
+                        p.vx += (dx / distance) * pull + (-dy / distance) * 0.3
+                        p.vy += (dy / distance) * pull + (dx / distance) * 0.3
+                survived_particles.append(p)
+            particles = survived_particles
+
+            for r in rockets:
+                dx, dy = bh.x - r.x, bh.y - r.y
+                dist = math.hypot(dx, dy)
+                if dist < 20: # Аннигиляция ракеты при сближении с чёрной дырой
+                    r.destroyed = True
+                    particles.extend(create_supernova(r.x, r.y, 1.5, color=(255, 50, 50)))
+                elif dist < bh.event_horizon:
+                    r.trapped = True
+                elif 0 < dist < 300:
+                    pull = (1.0 - dist / 300) * 6.0
+                    r.vx += (dx / dist) * pull
+                    r.vy += (dy / dist) * pull
+
+            for s in stations:
+                if math.hypot(bh.x - s.x, bh.y - s.y) < bh.event_horizon: s.trapped = True
+            for d in drones:
+                if math.hypot(bh.x - d.x, bh.y - d.y) < bh.event_horizon: d.trapped = True
+
+        # --- УДАРНЫЕ ВОЛНЫ ---
+        active_waves = []
+        for wave in shockwaves:
+            wave.update()
+            wave.draw(screen)
+            if wave.active:
+                active_waves.append(wave)
+                for p in particles:
+                    dist = math.hypot(p.x - wave.x, p.y - wave.y)
+                    if abs(dist - wave.radius) < 20 and dist > 0:
+                        p.vx += ((p.x - wave.x) / dist) * 8.0
+                        p.vy += ((p.y - wave.y) / dist) * 8.0
+                for r in rockets:
+                    dist = math.hypot(r.x - wave.x, r.y - wave.y)
+                    if abs(dist - wave.radius) < 25 and dist > 0:
+                        r.vx += ((r.x - wave.x) / dist) * 10.0
+                        r.vy += ((r.y - wave.y) / dist) * 10.0
+        shockwaves = active_waves
+
+        # --- ОБНОВЛЕНИЕ СТАНЦИЙ ---
+        for s in stations:
+            s.update(black_holes)
+            s.draw(screen)
+            if not s.trapped:
+                for p in particles:
+                    sdx, sdy = s.x - p.x, s.y - p.y
+                    s_dist = math.hypot(sdx, sdy)
+                    if 15 < s_dist < 200:
+                        p.vx += (sdx / s_dist) * 0.15
+                        p.vy += (sdy / s_dist) * 0.15
+
+        # --- ОБНОВЛЕНИЕ И ОЧИСТКА РАКЕТ ---
+        active_rockets = []
+        for r in rockets:
+            # Аннигиляция при таране станции
+            if not r.destroyed and not r.trapped:
+                for s in stations[:]:
+                    if not s.trapped and math.hypot(s.x - r.x, s.y - r.y) < (s.radius + r.radius):
+                        particles.extend(create_supernova(s.x, s.y, 4.0, color=(200, 50, 255)))
+                        stations.remove(s)
+                        r.destroyed = True
+                        break
+
+            if not r.destroyed:
+                r.update(mx, my, keys[pygame.K_r], particles)
+                r.draw(screen)
+                active_rockets.append(r)
+        rockets = active_rockets
+
+        # --- ДРОНЫ ---
+        active_drones = []
+        for d in drones:
+            d.update(particles, stations)
+            d.draw(screen)
+            active_drones.append(d)
+            
+            for s in stations[:]:
+                if math.hypot(s.x - d.x, s.y - d.y) < (s.radius + d.radius):
+                    particles.extend(create_supernova(s.x, s.y, 3.0, color=(50, 255, 50)))
+                    stations.remove(s)
+            for p in particles[:]:
+                if math.hypot(p.x - d.x, p.y - d.y) < (p.radius + d.radius):
+                    particles.remove(p)
+        drones = active_drones
+
+        # --- ЧАСТИЦЫ ---
+        alive_particles = []
+        for p in particles:
+            p.move()
+            if p.life > 0:
+                p.draw(screen)
+                alive_particles.append(p)
+        particles = alive_particles
+
+        # --- ИНТЕРФЕЙС ---
+        lines = [
+            f"Частиц: {len(particles)} | Ракет: {len(rockets)} | Чёрных: {len(black_holes)} | Белых: {len(white_holes)}",
+            "[ЛКМ] Взрыв | [Зажать ПКМ] Чёрная дыра | [Зажать W] Белая дыра",
+            "[R] Спавн/Управление ракетой | [H] Дрон-охотник | [S] Станция | [B] Волна | [C] Очистить"
+        ]
+        for idx, line in enumerate(lines):
+            text_surf = font.render(line, True, (220, 220, 220))
+            screen.blit(text_surf, (10, 10 + idx * 18))
+
+        pygame.display.flip()
+
+    pygame.quit()
+
+if __name__ == "__main__":
+    main()
